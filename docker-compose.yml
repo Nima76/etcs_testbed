@@ -1,0 +1,83 @@
+version: "3.9"
+
+services:
+  rbc:
+    build: .
+    container_name: etcs_rbc
+    command: ["python", "rbc_server.py"]
+    environment:
+      - RBC_LISTEN_HOST=0.0.0.0
+      - RBC_LISTEN_PORT=9000
+      - RBC_KEY_FILE=rbc_key.txt
+    networks:
+      - public_net
+    ports:
+      - "9000:9000"  # Expose RBC port (optional)
+
+  gsmr:
+    build: .
+    container_name: etcs_gsmr
+    command: ["python", "gsmr_network_emulator.py"]
+    environment:
+      - RBC_HOST=rbc
+      - RBC_PORT=9000
+      - GSMR_LISTEN_HOST=0.0.0.0
+      - GSMR_LISTEN_PORT=9001
+      - ADMIN_LISTEN_HOST=0.0.0.0
+      - ADMIN_LISTEN_PORT=9100
+    depends_on:
+      - rbc
+    networks:
+      - public_net
+    ports:
+      - "9001:9001"    # Train-side TCP port (optional)
+      - "9100:9100"    # Admin / MITM interface
+
+  radio:
+    build: .
+    container_name: etcs_radio
+    command: ["python", "train_radio.py"]
+    environment:
+      - GSMR_HOST=gsmr
+      - GSMR_PORT=9001
+      - EVC_HOST=evc
+      - EVC_PORT=9002
+    depends_on:
+      - gsmr
+      - evc
+    networks:
+      - public_net
+      - onboard_net
+
+  evc:
+    build: .
+    container_name: etcs_evc
+    command: ["python", "train_evc.py"]
+    environment:
+      - EVC_LISTEN_HOST=0.0.0.0
+      - EVC_LISTEN_PORT=9002
+      - DMI_HOST=dmi
+      - DMI_PORT=9003
+      - RBC_KEY_FILE=rbc_key.txt
+      - TRAIN_DATA_FILE=train_data.conf
+    networks:
+      - onboard_net
+
+  dmi:
+    build: .
+    container_name: etcs_dmi
+    command: ["python", "train_dmi.py"]
+    environment:
+      - DMI_LISTEN_HOST=0.0.0.0
+      - DMI_LISTEN_PORT=9003
+    networks:
+      - onboard_net
+    ports:
+      - "9003:9003/udp"  # DMI UDP status stream
+      - "8080:8080"      # DMI Web UI
+
+networks:
+  public_net:
+    driver: bridge
+  onboard_net:
+    driver: bridge
