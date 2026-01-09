@@ -88,8 +88,11 @@ class ModbusTcpProtocol(Protocol):
             msg_type_enum = MessageType.UNKNOWN
         msg_type_val = MESSAGE_TYPE_MAP[msg_type_enum]
         
-        # Hash train ID to 16-bit integer
-        train_id_hash = hash(train_id) & 0xFFFF
+        # Hash train ID to 16-bit integer (deterministic)
+        # Use SHA256 to ensure consistency across Python sessions
+        import hashlib
+        train_id_bytes = hashlib.sha256(train_id.encode()).digest()[:2]
+        train_id_hash = int.from_bytes(train_id_bytes, 'big')
         
         # Split timestamp into high and low 16 bits
         timestamp_int = int(timestamp)
@@ -129,6 +132,9 @@ class ModbusTcpProtocol(Protocol):
         registers.append(timestamp_low)
         
         # Registers 13-18: signature (truncated HMAC to 96 bits / 6 registers)
+        # WARNING: 96-bit signature is INTENTIONALLY WEAK for vulnerability demonstration.
+        # This truncation creates significant security risk susceptible to brute force
+        # and birthday attacks. DO NOT use this approach in production systems.
         if self._use_signatures:
             sig = self.sign(payload)
             sig_bytes = bytes.fromhex(sig[:24])  # Take first 12 bytes (96 bits)

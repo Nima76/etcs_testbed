@@ -1,9 +1,12 @@
 """Protocol registry for dynamic protocol selection."""
 
+import logging
 import os
 from typing import Dict, Optional, Type
 
 from protocols.base import Protocol
+
+logger = logging.getLogger(__name__)
 
 
 class ProtocolRegistry:
@@ -68,5 +71,5 @@ def get_protocol(name: Optional[str] = None, key: Optional[bytes] = None) -> Pro
     except KeyError:
         # Fallback to JSON protocol
         fallback = os.getenv("FALLBACK_PROTOCOL", "json")
-        print(f"WARNING: Protocol '{name}' not found, falling back to '{fallback}'")
+        logger.warning("Protocol '%s' not found, falling back to '%s'", name, fallback)
         return ProtocolRegistry.get(fallback, key=key)
