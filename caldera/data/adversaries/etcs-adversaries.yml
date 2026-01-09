@@ -1,0 +1,129 @@
+---
+id: a1b2c3d4-e5f6-7g8h-9i0j-1k2l3m4n5o6p
+name: ETCS Network Attacker
+description: |
+  Adversary with Man-in-the-Middle capabilities on GSM-R network.
+  Can inject forged messages but has no access to RBC or train systems.
+  
+  Objectives:
+  - Inject forged Movement Authorities
+  - Cause train to exceed speed limits
+  - Trigger emergency brakes (denial of service)
+  
+  Initial Access: GSM-R admin interface (port 9100)
+objective: |
+  Demonstrate network-based attacks on ETCS train control.
+  Successfully inject at least one forged MA that causes unsafe train behavior.
+atomic_ordering:
+  - 3c4d5e6f-7g8h-9i0j-1k2l-3m4n5o6p7q8r  # Signature Bypass Enable
+  - 1a2b3c4d-5e6f-7g8h-9i0j-1k2l3m4n5o6p  # Overspeed Attack
+  - 2b3c4d5e-6f7g-8h9i-0j1k-2l3m4n5o6p7q  # Emergency Brake Attack
+tags:
+  - ics
+  - railway
+  - mitm
+  - network-attacker
+---
+id: b2c3d4e5-f6g7-8h9i-0j1k-2l3m4n5o6p7q
+name: ETCS Insider - Train Operator
+description: |
+  Malicious train operator with physical access to onboard systems.
+  Can manipulate driver controls and disable safety features.
+  
+  Objectives:
+  - Disable signature verification
+  - Accept unsigned messages from compromised network
+  - Override speed controls
+  
+  Initial Access: Physical access to train cab, EVC driver interface
+objective: |
+  Demonstrate insider threats from train operators.
+  Disable safety controls and enable acceptance of forged authorities.
+atomic_ordering:
+  - 3c4d5e6f-7g8h-9i0j-1k2l-3m4n5o6p7q8r  # Signature Bypass Enable
+  - 1a2b3c4d-5e6f-7g8h-9i0j-1k2l3m4n5o6p  # Overspeed Attack
+tags:
+  - ics
+  - railway
+  - insider
+  - train-operator
+---
+id: c3d4e5f6-g7h8-9i0j-1k2l-3m4n5o6p7q8r
+name: ETCS RBC Compromiser
+description: |
+  Adversary who has compromised the Radio Block Centre (trackside).
+  Full access to RBC systems, databases, and cryptographic keys.
+  
+  Objectives:
+  - Steal RBC signing key
+  - Modify zone database to increase speed limits
+  - Issue malicious signed authorities
+  
+  Initial Access: RBC server compromise (SSH, remote code execution)
+objective: |
+  Demonstrate complete compromise of trackside authority.
+  Forge valid signed messages that will be accepted by trains.
+atomic_ordering:
+  - 4d5e6f7g-8h9i-0j1k-2l3m-4n5o6p7q8r9s  # RBC Key Theft
+  - 5e6f7g8h-9i0j-1k2l-3m4n-5o6p7q8r9s0t  # Database Manipulation
+  - 1a2b3c4d-5e6f-7g8h-9i0j-1k2l3m4n5o6p  # Overspeed Attack (with valid signature)
+tags:
+  - ics
+  - railway
+  - rbc-compromise
+  - supply-chain
+---
+id: d4e5f6g7-h8i9-0j1k-2l3m-4n5o6p7q8r9s
+name: ETCS Modbus Attacker
+description: |
+  ICS-focused adversary targeting Modbus TCP protocol implementation.
+  Exploits lack of authentication and encryption in Modbus.
+  
+  Objectives:
+  - Scan and enumerate Modbus registers
+  - Directly manipulate speed and position values
+  - Fuzz function codes to discover vulnerabilities
+  
+  Initial Access: Network access to Modbus TCP port (502)
+objective: |
+  Demonstrate ICS-specific attacks on Modbus protocol.
+  Successfully manipulate train control via direct register writes.
+atomic_ordering:
+  - 7g8h9i0j-1k2l-3m4n-5o6p-7q8r9s0t1u2v  # Modbus Register Scan
+  - 8h9i0j1k-2l3m-4n5o-6p7q-8r9s0t1u2v3w  # Function Code Fuzzing
+  - 6f7g8h9i-0j1k-2l3m-4n5o-6p7q8r9s0t1u  # Speed Limit Override
+  - 9i0j1k2l-3m4n-5o6p-7q8r-9s0t1u2v3w4x  # Position Spoofing
+tags:
+  - ics
+  - railway
+  - modbus
+  - scada
+---
+id: e5f6g7h8-i9j0-1k2l-3m4n-5o6p7q8r9s0t
+name: ETCS Advanced Persistent Threat
+description: |
+  Sophisticated nation-state attacker with multiple access vectors.
+  Combines network, insider, and RBC compromise capabilities.
+  
+  Objectives:
+  - Establish persistent access to all systems
+  - Exfiltrate cryptographic keys and configurations
+  - Execute coordinated multi-stage attack
+  - Maintain stealth and evade detection
+  
+  Initial Access: Multiple vectors (network, supply chain, insider)
+objective: |
+  Demonstrate advanced multi-stage attack against railway control systems.
+  Achieve complete control over train operations while maintaining stealth.
+atomic_ordering:
+  - 7g8h9i0j-1k2l-3m4n-5o6p-7q8r9s0t1u2v  # Modbus Register Scan (reconnaissance)
+  - 4d5e6f7g-8h9i-0j1k-2l3m-4n5o6p7q8r9s  # RBC Key Theft
+  - 3c4d5e6f-7g8h-9i0j-1k2l-3m4n5o6p7q8r  # Signature Bypass Enable
+  - 5e6f7g8h-9i0j-1k2l-3m4n-5o6p7q8r9s0t  # Database Manipulation
+  - 6f7g8h9i-0j1k-2l3m-4n5o-6p7q8r9s0t1u  # Speed Override (Modbus)
+  - 1a2b3c4d-5e6f-7g8h-9i0j-1k2l3m4n5o6p  # Overspeed Attack (JSON)
+tags:
+  - ics
+  - railway
+  - apt
+  - multi-stage
