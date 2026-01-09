@@ -1,108 +1,76 @@
 #!/usr/bin/env python3
 
 import os
+import random
 import select
 import socket
 import threading
 import time
-from typing import Tuple
+from datetime import datetime
 
-RBC_HOST = os.getenv("RBC_HOST", "127.0.0.1")
+RBC_HOST = os.getenv("RBC_HOST", "rbc")
 RBC_PORT = int(os.getenv("RBC_PORT", "9000"))
 
-GSMR_LISTEN_HOST = os.getenv("GSMR_LISTEN_HOST", "0.0.0.0")
-GSMR_LISTEN_PORT = int(os.getenv("GSMR_LISTEN_PORT", "9001"))
+LISTEN_HOST = os.getenv("GSMR_LISTEN_HOST", "0.0.0.0")
+LISTEN_PORT = int(os.getenv("GSMR_LISTEN_PORT", "9001"))
 
-ADMIN_LISTEN_HOST = os.getenv("ADMIN_LISTEN_HOST", "0.0.0.0")
-ADMIN_LISTEN_PORT = int(os.getenv("ADMIN_LISTEN_PORT", "9100"))
+ADMIN_HOST = os.getenv("ADMIN_LISTEN_HOST", "0.0.0.0")
+ADMIN_PORT = int(os.getenv("ADMIN_LISTEN_PORT", "9100"))
 
-
-class AdminClientHandler(threading.Thread):
-    """Simple text-based admin interface for injection.
-
-    An attacker who connects here can inject arbitrary lines towards the train
-    side of the connection, simulating a MITM / noise injection attack.
-    """
-
-    def __init__(self, conn: socket.socket, addr: Tuple[str, int], train_sock_getter):
-        super().__init__(daemon=True)
-        self.conn = conn
-        self.addr = addr
-        self.train_sock_getter = train_sock_getter
-
-    def run(self) -> None:
-        print(f"[GSM-R][ADMIN] Client connected from {self.addr}")
-        self.conn.sendall(
-            b"Welcome to GSM-R admin interface. Type lines to inject towards train.\n"
-        )
-        try:
-            while True:
-                data = self.conn.recv(4096)
-                if not data:
-                    break
-                for line in data.split(b"\n"):
-                    line = line.strip()
-                    if not line:
-                        continue
-                    msg = line + b"\n"
-                    train_sock = self.train_sock_getter()
-                    if train_sock is not None:
-                        try:
-                            train_sock.sendall(msg)
-                            print(f"[GSM-R][ADMIN] Injected towards train: {msg!r}")
-                        except OSError:
-                            self.conn.sendall(b"Train connection not available.\n")
-                    else:
-                        self.conn.sendall(b"No train connected.\n")
-        finally:
-            print(f"[GSM-R][ADMIN] Client from {self.addr} disconnected")
-            self.conn.close()
+DROP_PROBABILITY = float(os.getenv("GSMR_DROP_PROBABILITY", "0.0"))  # 0.0 = no drops by default
 
 
-def admin_server(train_sock_getter) -> None:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        s.bind((ADMIN_LISTEN_HOST, ADMIN_LISTEN_PORT))
-        s.listen(5)
-        print(f"[GSM-R][ADMIN] Listening on {ADMIN_LISTEN_HOST}:{ADMIN_LISTEN_PORT}")
-        while True:
-            conn, addr = s.accept()
-            handler = AdminClientHandler(conn, addr, train_sock_getter)
-            handler.start()
+def ts() -> str:
+    return datetime.now().strftime("%H:%M:%S")
 
 
-def proxy_loop():
-    # Retry loop to wait for RBC to be ready (useful in Docker and dev)
+def run_emulator() -> None:
+    # Connect to RBC
     while True:
         try:
-            print(f"[GSM-R] Connecting to RBC at {RBC_HOST}:{RBC_PORT}...")
+            print(f"[{ts()}] [NET] Connecting to RBC at {RBC_HOST}:{RBC_PORT}...")
             rbc_sock = socket.create_connection((RBC_HOST, RBC_PORT))
-            print("[GSM-R] Connected to RBC")
+            print(f"[{ts()}] [NET] Connected to RBC")
             break
         except OSError as exc:
-            print(f"[GSM-R] RBC not reachable yet ({exc}), retrying in 2s...")
+            print(f"[{ts()}] [NET] RBC not reachable yet ({exc}), retrying in 2s...")
             time.sleep(2.0)
 
-    train_sock_holder = {"sock": None}
-
-    def get_train_sock():
-        return train_sock_holder["sock"]
-
-    # Start admin interface in background
-    threading.Thread(target=admin_server, args=(get_train_sock,), daemon=True).start()
-
-    # Listen for a single train connection (for demo simplicity)
+    # Listen for Train Radio
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listen_sock:
         listen_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        listen_sock.bind((GSMR_LISTEN_HOST, GSMR_LISTEN_PORT))
+        listen_sock.bind((LISTEN_HOST, LISTEN_PORT))
         listen_sock.listen(1)
-        print(f"[GSM-R] Listening for Train on {GSMR_LISTEN_HOST}:{GSMR_LISTEN_PORT}")
+        print(f"[{ts()}] [NET] Listening for Train on {LISTEN_HOST}:{LISTEN_PORT}")
 
         train_sock, train_addr = listen_sock.accept()
-        train_sock_holder["sock"] = train_sock
-        print(f"[GSM-R] Train connected from {train_addr}")
+        print(f"[{ts()}] [NET] Train connected from {train_addr}")
 
         sockets = [rbc_sock, train_sock]
+
+        # Simple attacker / MITM admin interface: anything typed here is
+        # injected towards the Train side (Radio/EVC).
+        def admin_server() -> None:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as admin_sock:
+                admin_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                try:
+                    admin_sock.bind((ADMIN_HOST, ADMIN_PORT))
+                except OSError as exc:
+                    print(f"[{ts()}] [NET] Admin bind failed on {ADMIN_HOST}:{ADMIN_PORT}: {exc}")
+                    return
+                admin_sock.listen(5)
+                print(
+                    f"[{ts()}] [NET] Admin / attacker interface on {ADMIN_HOST}:{ADMIN_PORT} "
+                    f"(nc 127.0.0.1 {ADMIN_PORT})"
+                )
+                while True:
+                    conn, addr = admin_sock.accept()
+                    print(f"[{ts()}] [NET-ADMIN] Client connected from {addr}")
+                    threading.Thread(
+                        target=_handle_admin_client, args=(conn, train_sock), daemon=True
+                    ).start()
+
+        threading.Thread(target=admin_server, daemon=True).start()
 
         try:
             while True:
@@ -110,19 +78,49 @@ def proxy_loop():
                 for sock in readable:
                     data = sock.recv(4096)
                     if not data:
-                        print("[GSM-R] One side closed connection, shutting down proxy")
+                        print(f"[{ts()}] [NET] One side closed connection, shutting down")
                         return
 
                     if sock is rbc_sock:
-                        print(f"[GSM-R] RBC -> Train: {data!r}")
-                        train_sock.sendall(data)
+                        direction = "RBC -> Train"
+                        target = train_sock
                     else:
-                        print(f"[GSM-R] Train -> RBC: {data!r}")
-                        rbc_sock.sendall(data)
+                        direction = "Train -> RBC"
+                        target = rbc_sock
+
+                    if random.random() < DROP_PROBABILITY:
+                        print(f"[{ts()}] [NET] DROPPED packet ({direction}): {data!r}")
+                        continue
+
+                    print(f"[{ts()}] [NET] Relaying packet ({direction}): {data!r}")
+                    target.sendall(data)
         finally:
             train_sock.close()
             rbc_sock.close()
 
 
+def _handle_admin_client(conn: socket.socket, train_sock: socket.socket) -> None:
+    buf = b""
+    with conn:
+        while True:
+            chunk = conn.recv(4096)
+            if not chunk:
+                break
+            buf += chunk
+            while b"\n" in buf:
+                line, buf = buf.split(b"\n", 1)
+                line = line.rstrip(b"\r")
+                if not line:
+                    continue
+                # Forward raw line towards the Train side.
+                data = line + b"\n"
+                try:
+                    train_sock.sendall(data)
+                    print(f"[{ts()}] [NET-ADMIN] Injected towards Train: {data!r}")
+                except OSError as exc:
+                    print(f"[{ts()}] [NET-ADMIN] Failed to inject towards Train: {exc}")
+                    return
+
+
 if __name__ == "__main__":
-    proxy_loop()
+    run_emulator()

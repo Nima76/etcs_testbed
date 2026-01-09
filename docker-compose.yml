@@ -13,6 +13,7 @@ services:
       - public_net
     ports:
       - "9000:9000"  # Expose RBC port (optional)
+      - "9101:9101"  # RBC admin/emergency endpoint
 
   gsmr:
     build: .
@@ -62,6 +63,8 @@ services:
       - TRAIN_DATA_FILE=train_data.conf
     networks:
       - onboard_net
+    ports:
+      - "9102:9102"      # EVC driver command interface (SPEED/BRAKE)
 
   dmi:
     build: .
@@ -70,6 +73,8 @@ services:
     environment:
       - DMI_LISTEN_HOST=0.0.0.0
       - DMI_LISTEN_PORT=9003
+      - EVC_DRIVER_HOST=host.docker.internal
+      - EVC_DRIVER_PORT=9102
     networks:
       - onboard_net
     ports:
