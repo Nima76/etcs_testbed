@@ -7,6 +7,16 @@ The focus is on demonstrating message flows and a basic signing
 vulnerability where an attacker who obtains the RBC key can craft and
 inject valid-looking Movement Authorities (MAs).
 
+## 🚀 NEW: Multi-Protocol Support
+
+The testbed now supports multiple Industrial Control System (ICS) protocols:
+- **JSON over TCP** (default): Human-readable, HMAC-SHA256 signatures
+- **Modbus TCP**: Realistic ICS protocol with intentional vulnerabilities
+- **Protocol abstraction layer**: Easy to add new protocols (DNP3, OPC UA, etc.)
+
+See [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) for the full roadmap and
+[docs/MODBUS_PROTOCOL.md](docs/MODBUS_PROTOCOL.md) for Modbus usage guide.
+
 ## Components & Ports
 
 - **RBC (Trackside authority)**: `rbc_server.py`
@@ -61,6 +71,24 @@ RBC -> Train messages are JSON lines (`\n`-terminated) of the form:
 The EVC recomputes the HMAC over the `payload` object and compares it
 with the attached `signature`. If they match, the MA is accepted and the
 target speed/distance are updated.
+
+## Protocol Selection
+
+The testbed supports multiple protocols. Set via environment variable:
+
+```bash
+# Use JSON protocol (default, human-readable)
+export PROTOCOL=json
+
+# Use Modbus TCP protocol (realistic ICS)
+export PROTOCOL=modbus_tcp
+
+# Fallback if primary protocol unavailable
+export FALLBACK_PROTOCOL=json
+```
+
+**Modbus TCP** maps ETCS messages to holding registers for realistic ICS
+vulnerability testing. See [docs/MODBUS_PROTOCOL.md](docs/MODBUS_PROTOCOL.md) for details.
 
 ## Running the Testbed (Bare Metal)
 
@@ -169,6 +197,47 @@ nc 127.0.0.1 9100
 
 and inject malicious signed Movement Authorities as before.
 
+## Attack Framework
+
+The testbed includes built-in attack tools for adversarial testing:
+
+### Generic Attacks (JSON/Modbus)
+```python
+from attacks import AttackFramework
+
+atk = AttackFramework(target_host="127.0.0.1", target_port=9100)
+
+# Overspeed attack
+atk.overspeed_attack(speed_limit=300.0, protocol="json")
+
+# Emergency brake injection
+atk.emergency_brake_attack(protocol="json")
+
+# DoS flood
+atk.dos_flood(duration=10.0, rate=100)
+```
+
+### Modbus-Specific Attacks
+```python
+from attacks import ModbusAttacks
+
+atk = ModbusAttacks(target_host="127.0.0.1", target_port=502)
+
+# Direct register manipulation
+atk.overspeed_via_registers(speed_limit=250.0)
+
+# Position spoofing
+atk.manipulate_position(position_km=99.9)
+
+# Function code fuzzing
+results = atk.function_code_fuzzing(max_attempts=20)
+
+# Register scanning
+registers = atk.register_scanning(start=0, count=100)
+```
+
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for complete attack documentation.
+
 ## Running Unit Tests
 
 Unit tests live under the `tests/` directory and focus on the
@@ -188,7 +257,9 @@ pytest
 
 This will run tests such as:
 
+- Protocol encoding/decoding (JSON, Modbus TCP)
 - Signing + verification round-trip via `sign_message` and
   `verify_signature`.
+- Protocol registry and abstraction layer
 - Rejection of tampered Movement Authorities with mismatched signatures.
 - Basic `DmiPublisher.update_ma` state update behaviour.
